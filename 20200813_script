@@ -1,0 +1,142 @@
+sqoop import \
+--connect jdbc:mysql://localhost/dualcore \
+--username training --password training \
+--fields-terminated-by '\t' \
+--warehouse-dir /dualcore \
+--table customers
+
+sqoop import \
+--connect jdbc:mysql://localhost/dualcore \
+--username training --password training \
+--fields-terminated-by '\t' \
+--warehouse-dir /dualcore \
+--table products
+
+sqoop import \
+--connect jdbc:mysql://localhost/dualcore \
+--username training --password training \
+--fields-terminated-by '\t' \
+--warehouse-dir /dualcore \
+--table orders
+
+sqoop import \
+--connect jdbc:mysql://localhost/dualcore \
+--username training --password training \
+--fields-terminated-by '\t' \
+--warehouse-dir /dualcore \
+--table order_details \
+--split-by order_id
+
+[training@localhost pig_etl]$ pig -x local
+
+grunt> data = LOAD 'sample1.txt';
+grunt> DUMP data;
+
+grunt> first_2_columns = LOAD 'sample1.txt' AS (keyword:chararray, campaign_id:chararray);
+grunt> DUMP first_2_columns;
+------------------------------------------------------------------------------------------------------------------------------------------------
+data = LOAD '/dualcore/ad_data1.txt' AS (keyword:chararray,
+                              campaign_id:chararray,
+                              date:chararray,
+                              time:chararray,
+                              display_site:chararray,
+                              was_clicked:int,  -- TODO finish the LOAD statement
+                              cpc:int,
+                              country:chararray,
+                              placement:chararray);
+
+filter_data = FILTER data BY country == 'USA';
+
+foreach_data = FOREACH filter_data GENERATE campaign_id,
+                                            date,
+                                            time,
+                                            UPPER(TRIM(keyword)),
+                                            display_site,
+                                            placement,
+                                            was_clicked,
+                                            cpc;
+
+--DUMP foreach_data;
+STORE foreach_data INTO '/dualcore/ad_data1/' USING PigStorage('\t');
+------------------------------------------------------------------------------------------------------------------------------------------------
+data = LOAD '/dualcore/ad_data2.txt' USING PigStorage(',') AS (
+        campaign_id:chararray,
+        date:chararray,
+        time:chararray,
+        display_site:chararray,
+        placement:chararray,
+        was_clicked:int,
+        cpc:int,
+        keyword:chararray); -- TODO finish the LOAD statement
+
+distinct_data = DISTINCT data;
+
+foreach_data = FOREACH distinct_data GENERATE
+                campaign_id,
+                REPLACE(date, '-', '/'),
+                time,
+                UPPER(TRIM(keyword)),
+                display_site,
+                placement,
+                was_clicked,
+                cpc;
+
+
+--DUMP foreach_data;
+STORE foreach_data INTO '/dualcore/ad_data2/' USING PigStorage(',');
+------------------------------------------------------------------------------------------------------------------------------------------------
+data = LOAD '/dualcore/ad_data[1-2]/part*' AS (campaign_id:chararray,
+                                   date:chararray,
+                                   time:chararray,
+                                   keyword:chararray,
+                                   display_site:chararray,
+                                   placement:chararray,
+                                   was_clicked:int,
+                                   cpc:int);
+
+--DUMP data;
+
+filter_data = FILTER data BY was_clicked == 1;
+
+--DUMP filter_data;
+
+group_data = GROUP filter_data BY display_site;
+
+DESCRIBE group_data;
+
+group_total_cnt_data = FOREACH group_data GENERATE group, SUM(filter_data.cpc) AS cost;
+
+sorted_data = ORDER group_total_cnt_data BY cost ASC;
+
+three_data = LIMIT sorted_data 3;
+
+DUMP three_data;
+------------------------------------------------------------------------------------------------------------------------------------------------
+-- TODO (A): Replace 'FIXME' to load the test_ad_data.txt file.
+
+data = LOAD '/dualcore/ad_data[1-2]/part*' AS (campaign_id:chararray,
+             date:chararray, time:chararray,
+             keyword:chararray, display_site:chararray,
+             placement:chararray, was_clicked:int, cpc:int);
+
+
+-- TODO (B): Include only records where was_clicked has a value of 1
+filter_data = FILTER data BY was_clicked == 1;
+
+-- TODO (C): Group the data by the appropriate field
+group_data = GROUP filter_data BY keyword;
+
+/* TODO (D): Create a new relation which includes only the
+ *           display site and the total cost of all clicks
+ *           on that site
+ */
+group_total_cnt_data = FOREACH group_data GENERATE group, SUM(filter_data.cpc) AS cost;
+
+-- TODO (E): Sort that new relation by cost (ascending)
+sorted_data = ORDER group_total_cnt_data BY cost DESC;
+
+-- TODO (F): Display just the first three records to the screen
+three_data = LIMIT sorted_data 5;
+
+DUMP three_data;
+------------------------------------------------------------------------------------------------------------------------------------------------
