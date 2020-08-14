@@ -1,0 +1,172 @@
+beeline -u jdbc:hive2://elephant:10000 -n training
+
+CREATE EXTERNAL TABLE movierating (userid INT, movieid STRING, rating TINYINT) ROW FORMAT DELIMITED FIELDS TERMINATED BY '\t' LOCATION '/user/training/movierating';
+
+set hive.execution.engine=spark;
+set hive.execution.engine=mr;
+
+impala-shell
+INVALIDAE METADATA;
+
+curl -s "http://monkey:14000/webhdfs/v1/user/training?op=LISTSTATUS&user.name=training" | python -m json.tool
+
+hadoop jar /opt/cloudera/parcels/CDH/lib/hadoop-mapreduce/hadoop-mapreduce-examples.jar wordcount /tmp/shakespeare.txt test_output
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+[training@localhost data_mgmt]$ head /home/training/training_materials/analyst/data/ratings_2012.txt
+2012-05-21 12:52:48	1043182	1274362	5	This is truly fantastic!
+2012-10-14 01:36:07	1242853	1273879	2	The product quality was OK
+2012-10-14 02:41:50	1047430	1273799	2	Shoddy quality
+2012-10-14 10:10:05	1087455	1274476	4	Quality was passable
+2012-10-14 10:42:41	1170230	1273964	2	It was OK
+2012-10-14 19:12:33	1063130	1274734	4	It was OK
+2012-10-14 22:00:56	1031378	1274616	4	Quality was passable
+2012-10-15 00:27:47	1203215	1273850	5	Awesome product
+2012-10-15 01:14:26	1135616	1274218	4	Value of product was just alright
+2012-10-15 01:18:58	1145446	1274304	3	Average quality
+[training@localhost data_mgmt]$ head /home/training/training_materials/analyst/data/ratings_2013.txt
+2013-01-01 19:59:03	1176180	1274178	3	Mediocre
+2013-01-01 21:33:30	1242246	1274448	3	Value of product was just alright
+2013-01-01 21:48:00	1027478	1274666	3	I felt is was OK
+2013-01-01 23:44:48	1111142	1274048	3	It was alright
+2013-01-01 23:59:07	1113534	1274676	3	I feel it is decent
+2013-01-02 00:05:23	1246663	1274267	4	You won't find another as good as this one.
+2013-01-02 00:23:44	1206218	1274628	4	OK value
+2013-01-02 00:27:24	1048350	1274232	3	It was just alright
+2013-01-02 00:41:10	1057630	1274673	1	Red is ten times more expensive than the others!
+2013-01-02 00:41:31	1139783	1274054	3	Mediocre
+
+[training@localhost data_mgmt]$ hdfs dfs -put /home/training/training_materials/analyst/data/ratings_2012.txt /dualcore/
+[training@localhost data_mgmt]$ hdfs dfs -put /home/training/training_materials/analyst/data/ratings_2013.txt /dualcore/
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+INVALIDATE METADATA;
+
+SELECT COUNT(*) FROM ratings;
+
+LOAD DATA INPATH '/dualcore/ratings_2013.txt' INTO TABLE ratings;
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+CREATE EXTERNAL TABLE employees (
+    emp_id STRING,
+    fname STRING,
+    lname STRING,
+    address STRING,
+    city STRING,
+    state STRING,
+    zipcode STRING,
+    job_title STRING,
+    email STRING,
+    active STRING,
+    salary INT
+) ROW FORMAT DELIMITED FIELDS TERMINATED BY '\t'
+  LOCATION '/dualcore/employees/';
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+SELECT job_title, COUNT(*) AS num
+FROM employees
+GROUP BY job_title
+ORDER BY num DESC
+LIMIT 3;
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+sqoop import --connect jdbc:mysql://localhost/dualcore --username training --password training --fields-terminated-by '\t' --table suppliers --hive-import
+
+
+invalidate metadata;
+
+SELECT COUNT(*) FROM suppliers WHERE state='TX';
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+ALTER TABLE suppliers CHANGE company name STRING;
+
+DESCRIBE suppliers;
+
+ALTER TABLE suppliers RENAME to vendors;
+
+SELECT supp_id, name FROM vendors LIMIT 10;
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+CREATE EXTERNAL TABLE ads (
+  campaign_id STRING,
+  display_date STRING,
+  display_time STRING,
+  keyword STRING,
+  display_site STRING,
+  placement STRING,
+  was_clicked TINYINT,
+  cpc INT
+) PARTITIONED BY (network TINYINT)
+  ROW FORMAT DELIMITED FIELDS TERMINATED BY '\t'
+  LOCATION '/dualcore/ads/';
+
+  ALTER TABLE ads ADD partition (network=1);
+  ALTER TABLE ads ADD partition (network=2);
+
+  load data inpath '/dualcore/ad_data1/' into table ads partition (network=1);
+  load data inpath '/dualcore/ad_data2/' into table ads partition (network=2);
+
+  SELECT COUNT(*) FROM ads WHERE network=1;
+  SELECT COUNT(*) FROM ads WHERE network=2;
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+INVALIDATE METADATA;
+
+CREATE EXTERNAL TABLE latlon LIKE PARQUET '/dualcore/latlon/part-m-00000.parquet'
+STORED AS PARQUET;
+
+LOAD DATA INPATH '/user/hive/warehouse/latlon/part-m-00000.parquet' INTO TABLE latlon;
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+describe products;
+
+describe orders;
+
+describe order_details;
+
+SELECT * FROM products p JOIN order_details o
+ON (p.prod_id = o.prod_id) ;
+
+SELECT brand, name, COUNT(p.prod_id) AS sold
+FROM products p
+JOIN order_details d ON (p.prod_id = d.prod_id)
+GROUP BY brand, name, p.prod_id
+ORDER BY sold DESC
+LIMIT 3;
+
+SELECT * FROM orders;
+
+SELECT od.order_id, SUM(p.price) AS total
+FROM order_details od
+JOIN products p
+ON (od.prod_id = p.prod_id)products
+GROUP BY order_id
+ORDER BY total DESC
+LIMIT 10;
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+SELECT to_date(order_date) , SUM(price) AS revenue, sum(price-cost) as profit from products p, orders o, order_details od
+WHERE p.prod_id = od.prod_id AND o.order_id = od.order_id AND p.brand='Dualcore'
+GROUP BY to_date(order_date)
+LIMIT 10;
+
+SELECT o_date, profit,
+    ROW_NUMBER() OVER (PARTITION BY year(o_date), month(o_date) ORDER BY profit DESC) AS n
+  FROM (
+    SELECT to_date(order_date) as o_date, SUM(price) AS revenue, SUM(price - cost) as profit
+    FROM products p
+      JOIN order_details d
+        ON (p.prod_id = d.prod_id)
+      JOIN orders o
+        ON (d.order_id = o.order_id)
+    GROUP BY to_date(order_date)
+  ) r
+  ORDER BY o_date;
